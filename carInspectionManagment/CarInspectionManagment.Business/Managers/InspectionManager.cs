@@ -1,4 +1,5 @@
 ﻿using CarInspectionManagment.Business.Infrastructure;
+using CarInspectionManagment.Business.Infrastructure.Message;
 using CarInspectionManagment.Business.Managers.ViewCache;
 using CarInspectionManagment.Business.Persistence.Entities;
 using CarInspectionManagment.Business.Persistence.Repositories;
@@ -6,6 +7,9 @@ using CarInspectionManagment.Contract;
 using CarInspectionManagment.Contract.Filters;
 using CarInspectionManagment.Contract.Inspection.Models;
 using CarInspectionManagment.Contract.Inspection.Resource;
+using MassTransit;
+using MassTransit.Clients;
+using MassTransit.Transports;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -24,16 +28,36 @@ namespace CarInspectionManagment.Business.Managers
     public class InspectionManager : IInspectionManager
     {
         private readonly IInspectionRepository _inspectionRepository;
-        private readonly ICarInspectionViewCacheManager _carInspectionViewCacheManager;
-        public InspectionManager(IInspectionRepository inspectionRepository, ICarInspectionViewCacheManager carInspectionViewCacheManager )
+
+        private readonly IPublishEndpoint _publishEndpoint;
+        private readonly IRequestClient<GetInspectionsResponse> _client;
+        public InspectionManager(IInspectionRepository inspectionRepository, IRequestClient<GetInspectionsResponse> client, IPublishEndpoint publishEndpoint)
         {
             _inspectionRepository = inspectionRepository;
-            _carInspectionViewCacheManager = carInspectionViewCacheManager;
+            _client = client;
+            _publishEndpoint = publishEndpoint;
         }
         public async Task<List<InspectionResource>> GetInspectionsAsync(InspectionListFilter filters)
         {
+            // publish message to get from cache
+            var key = $"Inspection_key_{filters.Vinnumber}_{filters.DateOfCreation}_{filters.Reason}";
+
+            var response = await _client.GetResponse<GetInspectionsResponse>(key);
+
+            if (response.Message.Inspections != null && response.Message.Inspections.Any())
+            {
+                return response.Message.Inspections.Select(ins => ins.ToInspectionResources()).ToList();
+            }
+
             var entities = await _inspectionRepository.LoadinspectionsAsync(filters);
-            return entities.Select(_=>_.ToResource()).ToList();
+            var result = entities.Select(_ => _.ToResource()).ToList();
+
+            await _publishEndpoint.Publish(new GetInspectionsResponse { Inspections = result });
+
+
+            return result;
+      
+         
         }
 
         public async Task<InspectionResource> GetInspectionByIdAsync(int id)
@@ -48,15 +72,14 @@ namespace CarInspectionManagment.Business.Managers
             model.EnsureValidModel();
             var entity = new CarInspection
             {
-                DateOfCreation=model.DateOfCreation,
-                Vinnumber=model.Vinnumber,
-                Reason=model.Reason
+                DateOfCreation = model.DateOfCreation,
+                Vinnumber = model.Vinnumber,
+                Reason = model.Reason
             };
 
             await _inspectionRepository.CreateInspectionAsync(entity);
             var resource = entity.ToResource();
-
-            await  _carInspectionViewCacheManager.SetCarInspectAsync(resource);
+            await _publishEndpoint.Publish(new CreateInspectionResponse { Inspection = resource });
 
             return resource;
         }
@@ -71,7 +94,6 @@ namespace CarInspectionManagment.Business.Managers
 
             await _inspectionRepository.UpdateInspectionAsync(entity);
             var resource = entity.ToResource();
-            await _carInspectionViewCacheManager.SetCarInspectAsync(resource);
             return resource;
         }
 
@@ -82,7 +104,6 @@ namespace CarInspectionManagment.Business.Managers
             
             await _inspectionRepository.DeleteInspection(entity);
             var resource = entity.ToResource();
-           await _carInspectionViewCacheManager.DeleteCarInspectAsync(resource);
         }
 
         

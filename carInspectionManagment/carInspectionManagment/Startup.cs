@@ -1,21 +1,15 @@
-using Autofac;
-using Autofac.Extensions.DependencyInjection;
 using CarInspectionManagment.Business.Infrastructure;
-using CarInspectionManagment.Business.Managers;
-using CarInspectionManagment.Business.Persistence.Repositories;
+using CarInspectionManagment.Business.Persistence;
+using ConncterLayer;
+using MassTransit;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
 
 namespace carInspectionManagment
@@ -40,6 +34,21 @@ namespace carInspectionManagment
             services.AddServerTiming();
             services.AddDependencyInjection("User ID =cars;Password=1234;Server=localhost;Port=5432;Database=CarInspectionManagement ;Integrated Security=true;Pooling=true;");
 
+            services.AddMassTransit(config =>
+            {
+                config.AddConsumer<GetInspectionCacheUpdaterConsumer>();
+                config.AddConsumer<CreateInspectionCacheUpdaterConsumer>();
+
+                config.UsingRabbitMq((context, cfg) =>
+                {
+                    cfg.Host(new Uri("rabbitmq://localhost:5672"), h =>
+                    {
+                        h.Username("guest");
+                        h.Password("guest");
+                    });
+                });
+
+            });
 
         }
 
@@ -59,10 +68,6 @@ namespace carInspectionManagment
 
             app.UseAuthorization();
 
-            app.UseEndpoints(endpoints =>
-            {
-                endpoints.MapControllers();
-            });
         }
     }
 
